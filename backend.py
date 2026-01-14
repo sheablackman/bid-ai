@@ -1104,14 +1104,14 @@ def home() -> str:
         <h2>ℹ️ How this works</h2>
         <div style="color: var(--text); line-height: 1.8; font-size: 1rem;">
           <ol style="margin-left: 1.5rem; padding-left: 0.5rem;">
-            <li style="margin-bottom: 1rem;"><strong>Upload historical proposal and contract</strong><br>
-            <span style="color: var(--text-muted);">Select contract and proposal PDFs from past jobs. These show your company's standard terms and style.</span></li>
+            <li style="margin-bottom: 1rem;"><strong>Upload historical Subcontractor proposals and corresponding Subcontract Agreements.</strong><br>
+            <span style="color: var(--text-muted);">Select contract and proposal PDFs from past jobs. These show your company's standard terms and style. For the demo, I've provided mock contracts and proposals.</span></li>
             
             <li style="margin-bottom: 1rem;"><strong>Upload new proposal</strong><br>
-            <span style="color: var(--text-muted);">Upload the proposal PDF for the job you want to create a contract for.</span></li>
+            <span style="color: var(--text-muted);">Upload the Subcontractor Proposal PDF for the job you want to create a contract for. Not necessary for the demo.</span></li>
             
             <li style="margin-bottom: 1rem;"><strong>System identifies deltas</strong><br>
-            <span style="color: var(--text-muted);">The system compares the new proposal to your past contracts to find what's different.</span></li>
+            <span style="color: var(--text-muted);">The system compares the new proposal to your past contracts and proposals to find what's different.</span></li>
             
             <li style="margin-bottom: 1rem;"><strong>System edits only impacted sections</strong><br>
             <span style="color: var(--text-muted);">Only the sections that need to change are updated. Everything else stays the same.</span></li>
