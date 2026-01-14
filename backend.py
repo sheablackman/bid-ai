@@ -5,6 +5,7 @@ import json
 import time
 import shutil
 import subprocess
+import difflib
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from io import BytesIO
@@ -394,11 +395,164 @@ def _summary_guard(final_text: str) -> None:
         raise RuntimeError("Model returned summary style output. Base contract text is likely not clean enough or the model ignored rules.")
 
 
+def _find_proposal_excerpt_for_change(new_line: str, proposal_text: str, max_excerpt_length: int = 200) -> str:
+    """Find the most relevant proposal excerpt that explains a contract change."""
+    if not new_line or not new_line.strip():
+        return ""
+    
+    # Normalize for comparison
+    new_line_lower = new_line.lower().strip()
+    
+    # Split proposal into sentences
+    proposal_sentences = re.split(r'[.!?]\s+', proposal_text)
+    
+    best_match = ""
+    best_score = 0.0
+    
+    # Check each sentence for similarity
+    for sentence in proposal_sentences:
+        if not sentence.strip():
+            continue
+        
+        sentence_lower = sentence.lower().strip()
+        
+        # Calculate similarity using SequenceMatcher
+        similarity = difflib.SequenceMatcher(None, new_line_lower, sentence_lower).ratio()
+        
+        # Also check if key terms from new_line appear in sentence
+        new_line_words = set(word for word in new_line_lower.split() if len(word) > 3)
+        sentence_words = set(word for word in sentence_lower.split() if len(word) > 3)
+        
+        if new_line_words:
+            word_overlap = len(new_line_words & sentence_words) / len(new_line_words)
+            # Combine similarity and word overlap
+            combined_score = (similarity * 0.6) + (word_overlap * 0.4)
+        else:
+            combined_score = similarity
+        
+        if combined_score > best_score:
+            best_score = combined_score
+            best_match = sentence.strip()
+    
+    # If we found a reasonable match (score > 0.2), return it
+    if best_score > 0.2 and best_match:
+        # Truncate if too long
+        if len(best_match) > max_excerpt_length:
+            best_match = best_match[:max_excerpt_length] + "..."
+        return best_match
+    
+    # If no good match, try to find sentences containing key terms
+    key_terms = [word for word in new_line_lower.split() if len(word) > 4]
+    for term in key_terms[:3]:  # Check first 3 significant terms
+        for sentence in proposal_sentences:
+            if term in sentence.lower() and len(sentence.strip()) > 20:
+                excerpt = sentence.strip()
+                if len(excerpt) > max_excerpt_length:
+                    excerpt = excerpt[:max_excerpt_length] + "..."
+                return excerpt
+    
+    return ""
+
+
+def _generate_contract_diff(base_contract_text: str, final_contract_text: str, proposal_text: str) -> str:
+    """Generate a human-readable diff with proposal source attribution."""
+    base_lines = base_contract_text.splitlines(keepends=False)
+    final_lines = final_contract_text.splitlines(keepends=False)
+    
+    # Use SequenceMatcher to get opcodes (operations)
+    matcher = difflib.SequenceMatcher(None, base_lines, final_lines, autojunk=False)
+    opcodes = matcher.get_opcodes()
+    
+    if not opcodes or all(tag == 'equal' for tag, _, _, _, _ in opcodes):
+        return "# Contract Diff\n\nNo changes detected.\n"
+    
+    md_lines = ["# Contract Changes\n\n"]
+    md_lines.append("Line-by-line changes between base contract and generated contract.\n\n")
+    md_lines.append("---\n\n")
+    
+    change_count = 0
+    
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == 'equal':
+            continue
+        
+        change_count += 1
+        
+        if tag == 'replace':
+            # Modified lines
+            original_lines = base_lines[i1:i2]
+            new_lines = final_lines[j1:j2]
+            
+            # Handle single line changes
+            if len(original_lines) == 1 and len(new_lines) == 1:
+                original_line = original_lines[0]
+                new_line = new_lines[0]
+                proposal_excerpt = _find_proposal_excerpt_for_change(new_line, proposal_text)
+                
+                md_lines.append(f"## Change #{change_count}\n\n")
+                md_lines.append("**Original line:**\n```\n")
+                md_lines.append(original_line)
+                md_lines.append("\n```\n\n")
+                md_lines.append("**New line:**\n```\n")
+                md_lines.append(new_line)
+                md_lines.append("\n```\n\n")
+                if proposal_excerpt:
+                    md_lines.append("**Source from proposal:**\n")
+                    md_lines.append(f"> {proposal_excerpt}\n\n")
+                md_lines.append("---\n\n")
+            else:
+                # Multi-line change
+                md_lines.append(f"## Change #{change_count}\n\n")
+                md_lines.append("**Original lines:**\n```\n")
+                md_lines.append('\n'.join(original_lines))
+                md_lines.append("\n```\n\n")
+                md_lines.append("**New lines:**\n```\n")
+                md_lines.append('\n'.join(new_lines))
+                md_lines.append("\n```\n\n")
+                # Find excerpt for first new line
+                if new_lines:
+                    proposal_excerpt = _find_proposal_excerpt_for_change(new_lines[0], proposal_text)
+                    if proposal_excerpt:
+                        md_lines.append("**Source from proposal:**\n")
+                        md_lines.append(f"> {proposal_excerpt}\n\n")
+                md_lines.append("---\n\n")
+        
+        elif tag == 'delete':
+            # Deleted lines
+            removed_lines = base_lines[i1:i2]
+            md_lines.append(f"## Deletion #{change_count}\n\n")
+            md_lines.append("**Removed lines:**\n```\n")
+            md_lines.append('\n'.join(removed_lines))
+            md_lines.append("\n```\n\n")
+            md_lines.append("---\n\n")
+        
+        elif tag == 'insert':
+            # Added lines
+            added_lines = final_lines[j1:j2]
+            md_lines.append(f"## Addition #{change_count}\n\n")
+            md_lines.append("**Added lines:**\n```\n")
+            md_lines.append('\n'.join(added_lines))
+            md_lines.append("\n```\n\n")
+            # Find excerpt for first added line
+            if added_lines:
+                proposal_excerpt = _find_proposal_excerpt_for_change(added_lines[0], proposal_text)
+                if proposal_excerpt:
+                    md_lines.append("**Source from proposal:**\n")
+                    md_lines.append(f"> {proposal_excerpt}\n\n")
+            md_lines.append("---\n\n")
+    
+    return ''.join(md_lines)
+
+
 def _write_audit_artifacts(base_contract_text: str, new_proposal_text: str, final_contract_text: str) -> None:
     """Save the three required audit artifacts for every run."""
     _write_text(GENERATED_DIR / "base_contract.txt", base_contract_text)
     _write_text(GENERATED_DIR / "new_proposal.txt", new_proposal_text)
     _write_text(GENERATED_DIR / "final_contract.txt", final_contract_text)
+    
+    # Generate and save the diff
+    diff_md = _generate_contract_diff(base_contract_text, final_contract_text, new_proposal_text)
+    _write_text(GENERATED_DIR / "contract_diff.md", diff_md)
 
 
 def _write_debug_files(past_jobs: List[Tuple[str, str, str]], new_proposal_text: str, prompt: str) -> None:
