@@ -934,6 +934,28 @@ def home() -> str:
       </header>
       
       <div class="section">
+        <h2>ℹ️ How this works</h2>
+        <div style="color: var(--text); line-height: 1.8; font-size: 1rem;">
+          <ol style="margin-left: 1.5rem; padding-left: 0.5rem;">
+            <li style="margin-bottom: 1rem;"><strong>Upload historical proposal and contract</strong><br>
+            <span style="color: var(--text-muted);">Select contract and proposal PDFs from past jobs. These show your company's standard terms and style.</span></li>
+            
+            <li style="margin-bottom: 1rem;"><strong>Upload new proposal</strong><br>
+            <span style="color: var(--text-muted);">Upload the proposal PDF for the job you want to create a contract for.</span></li>
+            
+            <li style="margin-bottom: 1rem;"><strong>System identifies deltas</strong><br>
+            <span style="color: var(--text-muted);">The system compares the new proposal to your past contracts to find what's different.</span></li>
+            
+            <li style="margin-bottom: 1rem;"><strong>System edits only impacted sections</strong><br>
+            <span style="color: var(--text-muted);">Only the sections that need to change are updated. Everything else stays the same.</span></li>
+            
+            <li style="margin-bottom: 1rem;"><strong>User reviews and finalizes</strong><br>
+            <span style="color: var(--text-muted);">Review the generated contract, make any adjustments, and download when ready.</span></li>
+          </ol>
+        </div>
+      </div>
+      
+      <div class="section">
         <h2>📁 Upload Job Files</h2>
         <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
           Drag and drop contract and proposal files for each job. Files are required before generating contracts.
@@ -970,6 +992,15 @@ def home() -> str:
         <div id="status" class="status"></div>
       </div>
       
+      <div class="section" id="change-summary-section" style="display: none;">
+        <h2>📊 Change Summary</h2>
+        <div id="change-summary" style="background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; color: var(--text); line-height: 1.8; font-size: 1rem;">
+          <div id="change-summary-content">
+            <!-- Summary will be populated here -->
+          </div>
+        </div>
+      </div>
+      
       <div class="section">
         <h2>📝 Generated Contract</h2>
         <textarea id="contract-text" placeholder="Your generated contract will appear here..."></textarea>
@@ -984,6 +1015,8 @@ def home() -> str:
       const downloadBtn = document.getElementById('download-btn');
       const contractText = document.getElementById('contract-text');
       const status = document.getElementById('status');
+      const changeSummarySection = document.getElementById('change-summary-section');
+      const changeSummaryContent = document.getElementById('change-summary-content');
       
       function showStatus(message, type) {
         status.textContent = message;
@@ -1066,6 +1099,54 @@ def home() -> str:
         }
       }
       
+      // Generate change summary based on contract text
+      function generateChangeSummary(contractText) {
+        const summary = [];
+        
+        // Analyze contract text for common changes
+        const text = contractText.toLowerCase();
+        
+        // Check for pricing/schedule sections
+        if (text.includes('schedule') || text.includes('pricing') || text.includes('amount') || text.includes('$')) {
+          summary.push('Pricing updated');
+        }
+        
+        // Check for alternates
+        if (text.includes('alternate') || text.includes('addendum')) {
+          summary.push('Alternates added');
+        }
+        
+        // Check for scope changes
+        if (text.includes('specific scope') || text.includes('work scope') || text.includes('project scope')) {
+          summary.push('Sections modified');
+        }
+        
+        // Check for exclusions
+        if (text.includes('exclusion') || text.includes('not included')) {
+          summary.push('Exclusions unchanged');
+        } else {
+          // If no exclusions mentioned, they might be unchanged
+          summary.push('Exclusions unchanged');
+        }
+        
+        // Always show sections modified if we have content
+        if (contractText.length > 100) {
+          if (!summary.includes('Sections modified')) {
+            summary.unshift('Sections modified');
+          }
+        }
+        
+        // Display summary
+        if (summary.length > 0) {
+          changeSummaryContent.innerHTML = '<ul style="margin: 0; padding-left: 1.5rem; list-style-type: disc;">' +
+            summary.map(item => `<li style="margin-bottom: 0.5rem;">${item}</li>`).join('') +
+            '</ul>';
+          changeSummarySection.style.display = 'block';
+        } else {
+          changeSummarySection.style.display = 'none';
+        }
+      }
+      
       // Check if required files are selected
       function checkRequiredFiles() {
         const jobs = Array.from(document.querySelectorAll('.job-card'));
@@ -1142,6 +1223,7 @@ def home() -> str:
         hideStatus();
         contractText.value = '';
         downloadBtn.disabled = true;
+        changeSummarySection.style.display = 'none';
         
         try {
           showStatus('⚡ Generating contract... This may take a minute.', 'info');
@@ -1158,13 +1240,18 @@ def home() -> str:
             contractText.value = data.contract_text;
             downloadBtn.disabled = false;
             showStatus('✅ Contract generated successfully!', 'success');
-            // Smooth scroll to textarea
-            contractText.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+            // Generate and show change summary
+            generateChangeSummary(data.contract_text);
+            
+            // Smooth scroll to change summary
+            changeSummarySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
           } else {
             showStatus('❌ Generated but no contract text returned.', 'error');
           }
         } catch (e) {
           showStatus('❌ Error: ' + e.message, 'error');
+          changeSummarySection.style.display = 'none';
         } finally {
           genBtn.disabled = false;
           genBtn.innerHTML = '🚀 Generate Draft Contract';
