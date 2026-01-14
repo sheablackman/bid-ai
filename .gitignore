@@ -15,4 +15,11 @@ generated/*
 incoming/*
 !incoming/.gitkeep
 .env
+# Allow PDFs in contracts and incoming directories (needed for deployment)
+!contracts/
+!contracts/**/
+!contracts/**/*.pdf
+!incoming/
+!incoming/*.pdf
+# But ignore PDFs elsewhere
 *.pdf
