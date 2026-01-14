@@ -215,6 +215,22 @@ def _get_available_jobs() -> List[str]:
     return jobs
 
 
+def _load_base_contract() -> Tuple[str, str]:
+    """Load exactly one base contract. Returns (job_name, contract_text)."""
+    jobs = _get_available_jobs()
+    
+    if not jobs:
+        raise RuntimeError(f"No job directories found in {CONTRACTS_DIR}")
+    
+    # Use the first available job as the base contract
+    job_name = jobs[0]
+    try:
+        contract_text = _load_contract_text(job_name)
+        return (job_name, contract_text)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"Base contract not found for {job_name}: {e}")
+
+
 def _load_all_past_jobs() -> List[Tuple[str, str, str]]:
     """Load all past jobs (Job_001, Job_002, etc.). Returns list of (job_name, contract_text, proposal_text)."""
     jobs = _get_available_jobs()
@@ -244,52 +260,42 @@ def _load_new_proposal_text() -> str:
     return txt
 
 
-def _build_prompt(past_jobs: List[Tuple[str, str, str]], new_proposal_text: str) -> str:
-    """Build prompt using multiple past jobs to learn company style."""
-    
-    # Use the first past contract as the primary template
-    primary_job_name, primary_contract, _ = past_jobs[0]
-    
-    # Build examples section from past jobs
-    examples_section = "PAST JOB EXAMPLES (for style reference)\n"
-    examples_section += "Study these past contracts and proposals to understand the company's style, clauses, formatting, payment terms, insurance, etc.\n\n"
-    
-    for job_name, contract_text, proposal_text in past_jobs:
-        # Truncate if needed to fit within prompt limits
-        contract_sample = contract_text[:8000] if len(contract_text) > 8000 else contract_text
-        proposal_sample = proposal_text[:4000] if len(proposal_text) > 4000 else proposal_text
-        
-        examples_section += f"--- {job_name} ---\n"
-        examples_section += f"CONTRACT:\n{contract_sample}\n\n"
-        examples_section += f"PROPOSAL:\n{proposal_sample}\n\n"
+def _build_prompt(base_contract_text: str, new_proposal_text: str) -> str:
+    """Build strict deterministic prompt for contract rewriting."""
     
     prompt = (
-        "TASK\n"
-        "You must output a full revised subcontract document that matches the company's style from the past jobs shown below.\n\n"
-        "NON NEGOTIABLE RULES\n"
-        "1) Output must be the entire contract text, not a summary.\n"
-        "2) Match the company's exact style, clauses, formatting, payment terms, insurance, and structure from the past contracts.\n"
-        "3) PRESERVE ALL LINE BREAKS, NUMBERING, AND FORMATTING from the base contract. Do not collapse everything into one line.\n"
-        "4) Use the primary contract structure as the base template, but incorporate best practices from all past contracts.\n"
-        "5) Only edit sections that must change to match the new proposal (scope, price, dates, subs, etc.).\n"
-        "6) Do not invent anything. If something is missing, leave it unchanged or write [TBD] only in the exact place needed.\n"
-        "7) Preserve numbering and lists. Do not duplicate lines.\n"
-        "8) Do not add new sections like Project Overview, Key Changes, Updated Contract, Pricing Summary unless the base contract already contains them.\n"
-        "9) Do NOT include DocuSign envelope IDs or any signature/tracking IDs from past contracts. Remove these completely, do not replace with [TBD].\n"
-        "10) Do NOT include any company names or business entity names (like 'Wallcraft', 'Wallcraft Drywall, Inc.', etc.). Leave these fields blank.\n"
-        "11) Do NOT include any employee names or personal names from past contracts. Leave these fields blank for the user to fill in.\n"
-        "12) Output only the revised contract text. No commentary.\n\n"
-        f"{examples_section}\n"
-        "PRIMARY BASE CONTRACT (use as template)\n"
+        "TASK: Structured Contract Rewrite\n"
+        "You are rewriting a base contract to incorporate changes from a new proposal. "
+        "This is a line-by-line edit, not a summary or freeform generation.\n\n"
+        
+        "STRICT INSTRUCTIONS (DO NOT VIOLATE):\n"
+        "1. Do not summarize. Output the complete contract text.\n"
+        "2. Do not remove sections. Every section from the base contract must appear in the output.\n"
+        "3. Do not reorder content. Maintain the exact section order from the base contract.\n"
+        "4. Preserve section numbering, headings, and structure exactly as they appear in the base contract.\n"
+        "5. Only modify text inside existing sections when the proposal explicitly conflicts with the base contract.\n"
+        "6. If the proposal introduces new scope not present in any section, insert '[NEW FROM PROPOSAL]' inline at the appropriate location.\n"
+        "7. Do not invent new sections, headings, or structure.\n"
+        "8. Preserve all line breaks, formatting, and whitespace from the base contract.\n"
+        "9. Rewrite line by line. Do not condense or merge lines.\n"
+        "10. If a section has no changes needed, output it exactly as it appears in the base contract.\n"
+        "11. Do not add commentary, explanations, or meta-text. Output only the contract text.\n"
+        "12. Do not include DocuSign envelope IDs or tracking IDs. Remove these completely.\n"
+        "13. Do not include company names or employee names. Leave these fields blank.\n\n"
+        
+        "BASE CONTRACT (rewrite this):\n"
         "<<<BASE_CONTRACT\n"
-        f"{primary_contract}\n"
+        f"{base_contract_text}\n"
         "BASE_CONTRACT>>>\n\n"
-        "NEW PROPOSAL (update contract to match this)\n"
+        
+        "NEW PROPOSAL (use this to identify changes):\n"
         "<<<NEW_PROPOSAL\n"
         f"{new_proposal_text}\n"
         "NEW_PROPOSAL>>>\n\n"
-        "OUTPUT\n"
-        "Return the revised contract starting from 'Specific Scope' (or the first major section heading if 'Specific Scope' is not present). Do NOT include any header information, contract numbers, or preliminary text before the main contract sections. The output must begin with the first substantive section heading.\n"
+        
+        "OUTPUT:\n"
+        "Return the complete rewritten contract starting from 'Specific Scope' (or the first major section heading). "
+        "Preserve all structure, numbering, and formatting. Only modify text where the proposal requires changes.\n"
     )
 
     if len(prompt) > MAX_PROMPT_CHARS:
@@ -315,10 +321,10 @@ def _openai_generate(prompt: str, model: str, api_key: str) -> str:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a contract drafting assistant. Generate complete, professional contract documents."},
+                {"role": "system", "content": "You are a contract editor. You rewrite contracts line-by-line, preserving structure and only modifying text where explicitly required."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=0.0,  # Deterministic: same inputs = same output
             max_tokens=8000,
         )
         return response.choices[0].message.content or ""
@@ -344,8 +350,8 @@ def _ollama_generate(prompt: str, model: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0.1,
-            "top_p": 0.9,
+            "temperature": 0.0,  # Deterministic: same inputs = same output
+            "top_p": 1.0,  # Use all tokens for determinism
             "num_predict": 8000,
         },
     }
@@ -386,6 +392,13 @@ def _summary_guard(final_text: str) -> None:
     lower = final_text.lower()
     if any(m in lower for m in bad_markers):
         raise RuntimeError("Model returned summary style output. Base contract text is likely not clean enough or the model ignored rules.")
+
+
+def _write_audit_artifacts(base_contract_text: str, new_proposal_text: str, final_contract_text: str) -> None:
+    """Save the three required audit artifacts for every run."""
+    _write_text(GENERATED_DIR / "base_contract.txt", base_contract_text)
+    _write_text(GENERATED_DIR / "new_proposal.txt", new_proposal_text)
+    _write_text(GENERATED_DIR / "final_contract.txt", final_contract_text)
 
 
 def _write_debug_files(past_jobs: List[Tuple[str, str, str]], new_proposal_text: str, prompt: str) -> None:
@@ -1762,29 +1775,44 @@ def generate() -> JSONResponse:
     _ensure_dirs()
 
     try:
-        # Load all past jobs (Job_001, Job_002, etc.)
-        past_jobs = _load_all_past_jobs()
+        # Load exactly one base contract
+        base_job_name, base_contract = _load_base_contract()
         
         # Load new proposal
         new_proposal = _load_new_proposal_text()
         
-        # Build prompt using all past jobs
-        prompt = _build_prompt(past_jobs, new_proposal)
+        # Hard fail if either input is empty
+        if not base_contract or not base_contract.strip():
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Base contract is empty for {base_job_name}. Cannot generate contract."
+            )
         
-        # Write debug files
-        _write_debug_files(past_jobs, new_proposal, prompt)
+        if not new_proposal or not new_proposal.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="New proposal is empty. Cannot generate contract."
+            )
         
-        # Generate contract using LLM
+        # Build strict deterministic prompt
+        prompt = _build_prompt(base_contract, new_proposal)
+        
+        # Generate contract using LLM (deterministic with temperature=0)
         final_text = _llm_generate(prompt, LLM_PROVIDER)
+        
+        # Minimal post-processing (only cleaning, no structural changes)
         final_text = _normalize_text(final_text)
         final_text = _trim_to_specific_scope(final_text)  # Trim to start at Specific Scope
         final_text = _remove_page_numbers(final_text)
         final_text = _clean_docusign_ids(final_text)
         final_text = _remove_company_name(final_text)
         final_text = _normalize_text(final_text)  # Re-normalize after cleaning
-        _summary_guard(final_text)
+        _summary_guard(final_text)  # Ensure it's not a summary
 
-        # Save text file
+        # Save the three required audit artifacts
+        _write_audit_artifacts(base_contract, new_proposal, final_text)
+
+        # Save timestamped output files
         stamp = _now_stamp()
         out_path_txt = GENERATED_DIR / f"{stamp}_Job_003_contract.txt"
         _write_text(out_path_txt, final_text)
@@ -1800,6 +1828,8 @@ def generate() -> JSONResponse:
             "contract_text": final_text
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
