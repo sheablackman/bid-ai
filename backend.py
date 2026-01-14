@@ -1179,8 +1179,11 @@ def home() -> str:
       
       // Setup file selection system
       function setupFileSelection() {
-        // Handle checkmark clicks for job files
-        document.querySelectorAll('.file-select-item .check-btn:not(.disabled)').forEach(btn => {
+        // Handle checkmark clicks for job files (including disabled ones)
+        document.querySelectorAll('.file-select-item .check-btn').forEach(btn => {
+          // Skip incoming proposal button (handled separately)
+          if (btn.id === 'incoming-check-btn') return;
+          
           // Remove old listeners by cloning
           const newBtn = btn.cloneNode(true);
           btn.parentNode.replaceChild(newBtn, btn);
@@ -1192,8 +1195,8 @@ def home() -> str:
             const fileType = item.dataset.type;
             const exists = item.dataset.exists === 'true';
             
-            if (!exists) {
-              // If file doesn't exist, open file picker
+            // If disabled or file doesn't exist, open file picker
+            if (newBtn.disabled || !exists) {
               const input = item.querySelector('input[type="file"]');
               if (input) input.click();
               return;
